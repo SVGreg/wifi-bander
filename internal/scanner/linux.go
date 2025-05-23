@@ -26,7 +26,8 @@ func (l *LinuxScanner) Scan() ([]WiFiNetwork, error) {
 
 // scanWithNmcli uses NetworkManager's nmcli to scan for networks
 func (l *LinuxScanner) scanWithNmcli() ([]WiFiNetwork, error) {
-	cmd := exec.Command("nmcli", "-t", "-f", "SSID,CHAN,SIGNAL,FREQ", "dev", "wifi")
+	// Enhanced nmcli command to get more fields
+	cmd := exec.Command("nmcli", "-t", "-f", "SSID,CHAN,SIGNAL,FREQ,SECURITY,MODE,BSSID", "dev", "wifi")
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("nmcli command failed: %v", err)
@@ -73,7 +74,22 @@ func (l *LinuxScanner) parseNmcliOutput(output string) ([]WiFiNetwork, error) {
 			continue
 		}
 
-		network := l.createWiFiNetwork(ssid, channel, signal, frequency)
+		// Extract additional fields if available
+		security := "Unknown"
+		mode := "Infrastructure"
+		bssid := "Unknown"
+
+		if len(parts) >= 5 && parts[4] != "" {
+			security = parts[4]
+		}
+		if len(parts) >= 6 && parts[5] != "" {
+			mode = parts[5]
+		}
+		if len(parts) >= 7 && parts[6] != "" {
+			bssid = parts[6]
+		}
+
+		network := l.createWiFiNetworkEnhanced(ssid, channel, signal, frequency, security, mode, bssid)
 		networks = append(networks, network)
 		updateChannelMap(channelMap, channel, signal)
 	}
@@ -161,6 +177,12 @@ func (l *LinuxScanner) parseIwlistCell(cell string) (WiFiNetwork, error) {
 			ssid := strings.Split(line, "ESSID:")[1]
 			ssid = strings.Trim(ssid, "\"")
 			network.SSID = ssid
+		} else if strings.Contains(line, "Address:") {
+			parts := strings.Fields(line)
+			if len(parts) >= 5 {
+				network.BSSID = parts[4]
+				network.Vendor = getVendorFromMAC(parts[4])
+			}
 		} else if strings.Contains(line, "Channel:") {
 			parts := strings.Fields(line)
 			for i, part := range parts {
@@ -197,6 +219,18 @@ func (l *LinuxScanner) parseIwlistCell(cell string) (WiFiNetwork, error) {
 					}
 				}
 			}
+		} else if strings.Contains(line, "Encryption key:") {
+			if strings.Contains(line, "on") {
+				network.Security = "WPA/WPA2" // Default assumption for encrypted
+			} else {
+				network.Security = "Open"
+			}
+		} else if strings.Contains(line, "IE: IEEE 802.11i/WPA2") {
+			network.Security = "WPA2"
+		} else if strings.Contains(line, "IE: WPA Version 1") {
+			network.Security = "WPA"
+		} else if strings.Contains(line, "Extra:") && strings.Contains(line, "wpa_ie") {
+			network.Security = "WPA"
 		}
 	}
 
@@ -212,7 +246,28 @@ func (l *LinuxScanner) parseIwlistCell(cell string) (WiFiNetwork, error) {
 		network.Frequency = channelToFrequency(network.Channel)
 	}
 
+	// Fill in additional properties
 	network.StationCount = estimateStationCount(network.Signal, network.Channel)
+	network.Quality = calculateQuality(network.Signal)
+
+	if network.Security == "" {
+		network.Security = "Unknown"
+	}
+	if network.PHYMode == "" {
+		network.PHYMode = "Unknown"
+	}
+	if network.ChannelWidth == "" {
+		network.ChannelWidth = "Unknown"
+	}
+	if network.NetworkType == "" {
+		network.NetworkType = "Infrastructure"
+	}
+	if network.BSSID == "" {
+		network.BSSID = "Unknown"
+	}
+	if network.Vendor == "" {
+		network.Vendor = "Unknown"
+	}
 
 	if network.SSID == "" || network.Channel == 0 {
 		return network, fmt.Errorf("incomplete network data")
@@ -221,11 +276,17 @@ func (l *LinuxScanner) parseIwlistCell(cell string) (WiFiNetwork, error) {
 	return network, nil
 }
 
-// createWiFiNetwork creates a WiFiNetwork struct from parsed parameters
-func (l *LinuxScanner) createWiFiNetwork(ssid string, channel, signal, frequency int) WiFiNetwork {
+// createWiFiNetworkEnhanced creates a WiFiNetwork struct with enhanced information
+func (l *LinuxScanner) createWiFiNetworkEnhanced(ssid string, channel, signal, frequency int, security, mode, bssid string) WiFiNetwork {
 	band := "2.4G"
 	if frequency > 5000 {
 		band = "5G"
+	}
+
+	// Estimate channel width based on frequency and band
+	channelWidth := "20MHz"
+	if band == "5G" {
+		channelWidth = "80MHz" // Common default for 5GHz
 	}
 
 	return WiFiNetwork{
@@ -235,5 +296,19 @@ func (l *LinuxScanner) createWiFiNetwork(ssid string, channel, signal, frequency
 		Band:         band,
 		Frequency:    frequency,
 		StationCount: estimateStationCount(signal, channel),
+		Quality:      calculateQuality(signal),
+		Security:     security,
+		PHYMode:      "Unknown", // Would need more detailed parsing
+		ChannelWidth: channelWidth,
+		NetworkType:  mode,
+		BSSID:        bssid,
+		Vendor:       getVendorFromMAC(bssid),
+		Noise:        0, // Not easily available from nmcli
+		SNR:          0, // Not easily available from nmcli
 	}
+}
+
+// createWiFiNetwork creates a WiFiNetwork struct from parsed parameters (legacy method)
+func (l *LinuxScanner) createWiFiNetwork(ssid string, channel, signal, frequency int) WiFiNetwork {
+	return l.createWiFiNetworkEnhanced(ssid, channel, signal, frequency, "Unknown", "Infrastructure", "Unknown")
 }

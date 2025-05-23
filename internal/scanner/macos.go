@@ -193,16 +193,60 @@ func (m *MacOSScanner) parseNetworkProperty(network *WiFiNetwork, line string) {
 				}
 			}
 		}
+
+		// Extract channel width from parentheses like "(5GHz, 80MHz)"
+		if strings.Contains(value, "(") && strings.Contains(value, ")") {
+			parenContent := strings.Split(strings.Split(value, "(")[1], ")")[0]
+			if strings.Contains(parenContent, "MHz") {
+				widthParts := strings.Split(parenContent, ",")
+				if len(widthParts) > 1 {
+					network.ChannelWidth = strings.TrimSpace(widthParts[1])
+				}
+			}
+		}
+
 	case "Signal / Noise":
 		// Parse signal like "-77 dBm / -94 dBm"
 		signalParts := strings.Fields(value)
-		if len(signalParts) > 0 {
+		if len(signalParts) >= 4 {
+			// Signal strength
 			signalStr := strings.TrimSuffix(signalParts[0], " dBm")
 			if sig, err := strconv.Atoi(signalStr); err == nil {
 				network.Signal = sig
 				network.StationCount = estimateStationCount(sig, network.Channel)
 			}
+
+			// Noise level
+			if len(signalParts) >= 4 {
+				noiseStr := strings.TrimSuffix(signalParts[3], " dBm")
+				if noise, err := strconv.Atoi(noiseStr); err == nil {
+					network.Noise = noise
+					// Calculate SNR
+					if network.Signal != 0 && network.Noise != 0 {
+						network.SNR = network.Signal - network.Noise
+					}
+					// Calculate quality percentage (rough approximation)
+					network.Quality = calculateQuality(network.Signal)
+				}
+			}
 		}
+
+	case "Security":
+		network.Security = value
+		if network.Security == "" {
+			network.Security = "Open"
+		}
+
+	case "PHY Mode":
+		network.PHYMode = value
+
+	case "Network Type":
+		network.NetworkType = value
+
+	case "BSSID":
+		network.BSSID = value
+		// Extract vendor from MAC address
+		network.Vendor = getVendorFromMAC(value)
 	}
 }
 
@@ -221,5 +265,14 @@ func (m *MacOSScanner) createWiFiNetwork(ssid string, channel, signal int) WiFiN
 		Band:         band,
 		Frequency:    frequency,
 		StationCount: estimateStationCount(signal, channel),
+		Quality:      calculateQuality(signal),
+		Security:     "Unknown",
+		PHYMode:      "Unknown",
+		ChannelWidth: "Unknown",
+		NetworkType:  "Infrastructure",
+		BSSID:        "Unknown",
+		Vendor:       "Unknown",
+		Noise:        0,
+		SNR:          0,
 	}
 }

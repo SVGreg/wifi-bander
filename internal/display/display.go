@@ -19,34 +19,107 @@ type WiFiNetwork interface {
 	GetStationCount() int
 	GetCongestionScore() int
 	GetFrequency() int
+	GetSecurity() string
+	GetPHYMode() string
+	GetChannelWidth() string
+	GetNetworkType() string
+	GetBSSID() string
+	GetVendor() string
+	GetQuality() int
+	GetNoise() int
+	GetSNR() int
 }
 
-// DisplayResults shows the WiFi scan results in a formatted table
+// DisplayResults shows the WiFi scan results in a comprehensive formatted table
 func DisplayResults(networks []WiFiNetwork) {
 	fmt.Printf("\n=== WiFi Network Analysis - %s ===\n", time.Now().Format("15:04:05"))
 
-	// Create a new tabwriter
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	if len(networks) == 0 {
+		fmt.Println("No networks detected.")
+		return
+	}
 
-	// Print header
-	fmt.Fprintln(w, "SSID\tBand\tChannel\tSignal (dBm)\tStations\tCongestion\tFreq (MHz)\t")
-	fmt.Fprintln(w, "----\t----\t-------\t-----------\t--------\t----------\t---------\t")
+	// Create a new tabwriter with wider spacing for comprehensive data
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 1, ' ', 0)
 
-	// Print each network's information
+	// Comprehensive header
+	fmt.Fprintln(w, "SSID\tBand\tCh\tSignal\tQuality\tSecurity\tPHY Mode\tWidth\tVendor\tCongestion\tFreq\t")
+	fmt.Fprintln(w, "----\t----\t--\t------\t-------\t--------\t--------\t-----\t------\t----------\t----\t")
+
+	// Print each network's comprehensive information
 	for _, net := range networks {
 		congestionLevel := GetCongestionLevel(net.GetCongestionScore())
-		fmt.Fprintf(w, "%s\t%s\t%d\t%d\t%d\t%s\t%d\t\n",
-			net.GetSSID(),
+
+		// Truncate long values for better table formatting, but make Security and PHY Mode wider
+		ssid := truncateString(net.GetSSID(), 16)
+		security := truncateString(net.GetSecurity(), 18) // Increased from 10 to 18
+		phyMode := truncateString(net.GetPHYMode(), 15)   // Increased from 10 to 15
+		vendor := truncateString(net.GetVendor(), 8)
+
+		fmt.Fprintf(w, "%s\t%s\t%d\t%d dBm\t%d%%\t%s\t%s\t%s\t%s\t%s\t%d\t\n",
+			ssid,
 			net.GetBand(),
 			net.GetChannel(),
 			net.GetSignal(),
-			net.GetStationCount(),
+			net.GetQuality(),
+			security,
+			phyMode,
+			net.GetChannelWidth(),
+			vendor,
 			congestionLevel,
 			net.GetFrequency(),
 		)
 	}
 
 	// Flush the tabwriter to display the table
+	w.Flush()
+
+	// Show network count summary
+	fmt.Printf("\nTotal networks detected: %d\n", len(networks))
+}
+
+// truncateString truncates a string to a maximum length for table formatting
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	if maxLen <= 3 {
+		return s[:maxLen]
+	}
+	return s[:maxLen-3] + "..."
+}
+
+// DisplayCompactResults shows a compact view of the networks
+func DisplayCompactResults(networks []WiFiNetwork) {
+	fmt.Printf("\n=== WiFi Networks (Compact View) - %s ===\n", time.Now().Format("15:04:05"))
+
+	if len(networks) == 0 {
+		fmt.Println("No networks detected.")
+		return
+	}
+
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+
+	// Compact header
+	fmt.Fprintln(w, "SSID\tBand\tChannel\tSignal\tSecurity\tCongestion\t")
+	fmt.Fprintln(w, "----\t----\t-------\t------\t--------\t----------\t")
+
+	// Print compact network information
+	for _, net := range networks {
+		congestionLevel := GetCongestionLevel(net.GetCongestionScore())
+		ssid := truncateString(net.GetSSID(), 20)
+		security := truncateString(net.GetSecurity(), 12)
+
+		fmt.Fprintf(w, "%s\t%s\t%d\t%d dBm\t%s\t%s\t\n",
+			ssid,
+			net.GetBand(),
+			net.GetChannel(),
+			net.GetSignal(),
+			security,
+			congestionLevel,
+		)
+	}
+
 	w.Flush()
 }
 
@@ -159,58 +232,64 @@ func displayChannelUsageStats(networks []analyzer.WiFiNetwork) {
 		}
 	}
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 1, ' ', 0)
 
-	// 2.4GHz usage
-	if len(usage24) > 0 {
-		fmt.Fprintln(w, "\n2.4GHz Channel Usage:")
-		fmt.Fprintln(w, "Channel\tNetworks\tCongestion\t")
-		fmt.Fprintln(w, "-------\t--------\t----------\t")
+	// 2.4GHz horizontal display - show channels 1-13 (EU standard, most comprehensive)
+	fmt.Fprintln(w, "\n2.4GHz Channel Usage:")
 
-		// Sort channels
-		var channels24 []int
-		for ch := range usage24 {
-			channels24 = append(channels24, ch)
-		}
-		sort.Ints(channels24)
-
-		for _, ch := range channels24 {
-			count := usage24[ch]
-			congestion := "Low"
-			if count >= 4 {
-				congestion = "Very High"
-			} else if count >= 3 {
-				congestion = "High"
-			} else if count >= 2 {
-				congestion = "Medium"
-			}
-			fmt.Fprintf(w, "%d\t%d\t%s\t\n", ch, count, congestion)
-		}
+	// Channel headers
+	fmt.Fprint(w, "Channel\t")
+	for ch := 1; ch <= 13; ch++ {
+		fmt.Fprintf(w, "%d\t", ch)
 	}
+	fmt.Fprintln(w)
 
-	// 5GHz usage
+	// Separator line
+	fmt.Fprint(w, "-------\t")
+	for ch := 1; ch <= 13; ch++ {
+		fmt.Fprint(w, "-\t")
+	}
+	fmt.Fprintln(w)
+
+	// Network counts
+	fmt.Fprint(w, "Networks\t")
+	for ch := 1; ch <= 13; ch++ {
+		count := usage24[ch] // Will be 0 if channel not found
+		fmt.Fprintf(w, "%d\t", count)
+	}
+	fmt.Fprintln(w)
+
+	// 5GHz horizontal display - show all UNII band channels
 	if len(usage5) > 0 {
 		fmt.Fprintln(w, "\n5GHz Channel Usage:")
-		fmt.Fprintln(w, "Channel\tNetworks\tCongestion\t")
-		fmt.Fprintln(w, "-------\t--------\t----------\t")
 
-		// Sort channels
-		var channels5 []int
-		for ch := range usage5 {
-			channels5 = append(channels5, ch)
-		}
-		sort.Ints(channels5)
+		// Get all 5GHz channels from analyzer
+		channelInfo := analyzer.GetChannelInfo()
+		allChannels5G := channelInfo["5GHz"].(map[string]interface{})["all"].([]int)
 
-		for _, ch := range channels5 {
-			count := usage5[ch]
-			congestion := "Low"
-			if count >= 3 {
-				congestion = "High"
-			} else if count >= 2 {
-				congestion = "Medium"
-			}
-			fmt.Fprintf(w, "%d\t%d\t%s\t\n", ch, count, congestion)
+		// Channel headers
+		fmt.Fprint(w, "Channel\t")
+		for _, ch := range allChannels5G {
+			fmt.Fprintf(w, "%d\t", ch)
 		}
+		fmt.Fprintln(w)
+
+		// Separator line
+		fmt.Fprint(w, "-------\t")
+		for range allChannels5G {
+			fmt.Fprint(w, "--\t")
+		}
+		fmt.Fprintln(w)
+
+		// Network counts
+		fmt.Fprint(w, "Networks\t")
+		for _, ch := range allChannels5G {
+			count := usage5[ch] // Will be 0 if channel not found
+			fmt.Fprintf(w, "%d\t", count)
+		}
+		fmt.Fprintln(w)
+	} else {
+		fmt.Fprintln(w, "\n5GHz Channel Usage: No 5GHz networks detected")
 	}
 
 	w.Flush()
