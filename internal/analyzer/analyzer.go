@@ -1,6 +1,7 @@
 package analyzer
 
 import (
+	"fmt"
 	"sort"
 )
 
@@ -18,6 +19,7 @@ type WiFiNetwork interface {
 	GetChannel() int
 	GetSignal() int
 	GetStationCount() int
+	GetChannelWidth() string
 }
 
 // NetworkInfo is a minimal struct for networks used in analysis
@@ -166,105 +168,401 @@ func getDetectedChannels(networks []WiFiNetwork, band string) []int {
 	return channels
 }
 
-// GetChannelRecommendations returns recommended channels based on congestion analysis
-func GetChannelRecommendations(networks []WiFiNetwork) map[string][]int {
-	channelUsage24 := make(map[int]int)
-	channelUsage5 := make(map[int]int)
+// ChannelRecommendation represents a recommended channel with scoring details
+type ChannelRecommendation struct {
+	Channel           int
+	Frequency         int
+	Score             float64
+	InterferenceLevel string
+	Reasoning         string
+	SignalImpact      float64
+	FrequencyGap      int // MHz to nearest neighbor
+}
 
-	// Count networks per channel
-	for _, network := range networks {
-		if network.GetBand() == "2.4G" {
-			channelUsage24[network.GetChannel()]++
-		} else {
-			channelUsage5[network.GetChannel()]++
-		}
-	}
+// GetChannelRecommendations returns top 3 recommended channels per band based on advanced criteria
+func GetChannelRecommendations(networks []WiFiNetwork) map[string][]ChannelRecommendation {
+	// Analyze current network landscape
+	channelAnalysis24 := analyzeChannelLandscape(networks, "2.4G")
+	channelAnalysis5 := analyzeChannelLandscape(networks, "5G")
 
-	recommendations := make(map[string][]int)
+	recommendations := make(map[string][]ChannelRecommendation)
 
-	// For 2.4GHz: Use detected channels, but prefer non-overlapping channels in recommendations
-	detected24 := getDetectedChannels(networks, "2.4G")
-	available24 := detected24
+	// Get 2.4GHz recommendations
+	recommendations["2.4G"] = getBest24GHzChannels(channelAnalysis24)
 
-	// If no channels detected, fall back to comprehensive list
-	if len(available24) == 0 {
-		available24 = getAllAvailable24GHzChannels()
-	}
-
-	// For recommendations, prefer non-overlapping channels if they exist in available channels
-	recommend24 := []int{}
-	for _, ch := range Channels24GHz_NonOverlapping {
-		// Check if this non-overlapping channel exists in our available channels
-		for _, avail := range available24 {
-			if ch == avail {
-				recommend24 = append(recommend24, ch)
-				break
-			}
-		}
-	}
-
-	// If we don't have enough non-overlapping channels, add others
-	if len(recommend24) < 3 {
-		for _, ch := range available24 {
-			// Add channels not already in recommend24
-			found := false
-			for _, existing := range recommend24 {
-				if ch == existing {
-					found = true
-					break
-				}
-			}
-			if !found {
-				recommend24 = append(recommend24, ch)
-			}
-		}
-	}
-
-	bestChannels24 := findLeastCongestedChannels(channelUsage24, recommend24)
-	recommendations["2.4G"] = bestChannels24
-
-	// For 5GHz: Use detected channels with comprehensive fallback
-	detected5 := getDetectedChannels(networks, "5G")
-	available5 := detected5
-
-	// If no channels detected, fall back to comprehensive list
-	if len(available5) == 0 {
-		available5 = getAllAvailable5GHzChannels()
-	}
-
-	bestChannels5 := findLeastCongestedChannels(channelUsage5, available5)
-	recommendations["5G"] = bestChannels5
+	// Get 5GHz recommendations
+	recommendations["5G"] = getBest5GHzChannels(channelAnalysis5)
 
 	return recommendations
 }
 
-// findLeastCongestedChannels finds the least congested channels from available options
-func findLeastCongestedChannels(usage map[int]int, availableChannels []int) []int {
-	type channelScore struct {
-		channel int
-		count   int
+// NetworkAnalysis holds analysis data for a specific network
+type NetworkAnalysis struct {
+	Channel       int
+	Frequency     int
+	Signal        int
+	ChannelWidth  string
+	NetworkCount  int
+	StrongestRSSI int
+}
+
+// analyzeChannelLandscape creates a comprehensive analysis of the current WiFi landscape
+func analyzeChannelLandscape(networks []WiFiNetwork, band string) map[int]*NetworkAnalysis {
+	analysis := make(map[int]*NetworkAnalysis)
+
+	for _, network := range networks {
+		if network.GetBand() != band {
+			continue
+		}
+
+		ch := network.GetChannel()
+		freq := channelToFrequency(ch)
+		signal := network.GetSignal()
+
+		if existing, exists := analysis[ch]; exists {
+			existing.NetworkCount++
+			if signal > existing.StrongestRSSI {
+				existing.StrongestRSSI = signal
+			}
+		} else {
+			analysis[ch] = &NetworkAnalysis{
+				Channel:       ch,
+				Frequency:     freq,
+				Signal:        signal,
+				ChannelWidth:  getChannelWidth(network),
+				NetworkCount:  1,
+				StrongestRSSI: signal,
+			}
+		}
 	}
 
-	var scores []channelScore
+	return analysis
+}
+
+// getChannelWidth extracts channel width from network, with fallback logic
+func getChannelWidth(network WiFiNetwork) string {
+	if width := network.GetChannelWidth(); width != "Unknown" && width != "" {
+		return width
+	}
+	// Default assumptions based on band
+	if network.GetBand() == "5G" {
+		return "80MHz"
+	}
+	return "20MHz"
+}
+
+// getBest24GHzChannels finds optimal 2.4GHz channels with sophisticated scoring
+func getBest24GHzChannels(analysis map[int]*NetworkAnalysis) []ChannelRecommendation {
+	// Available 2.4GHz channels (1-13, EU standard)
+	availableChannels := []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13}
+
+	var recommendations []ChannelRecommendation
+
 	for _, ch := range availableChannels {
-		scores = append(scores, channelScore{
-			channel: ch,
-			count:   usage[ch],
-		})
+		freq := channelToFrequency(ch)
+		score := calculate24GHzScore(ch, freq, analysis)
+
+		recommendation := ChannelRecommendation{
+			Channel:           ch,
+			Frequency:         freq,
+			Score:             score,
+			InterferenceLevel: getInterferenceLevel(score),
+			Reasoning:         getReasoning24GHz(ch, analysis),
+			SignalImpact:      calculateSignalImpact(ch, analysis),
+			FrequencyGap:      calculateFrequencyGap(freq, analysis),
+		}
+
+		recommendations = append(recommendations, recommendation)
 	}
 
-	// Sort by usage (ascending)
-	sort.Slice(scores, func(i, j int) bool {
-		return scores[i].count < scores[j].count
+	// Sort by score (lower is better)
+	sort.Slice(recommendations, func(i, j int) bool {
+		return recommendations[i].Score < recommendations[j].Score
 	})
 
-	// Return top 3 least congested channels
-	result := make([]int, 0, 3)
-	for i := 0; i < len(scores) && i < 3; i++ {
-		result = append(result, scores[i].channel)
+	// Return top 3
+	if len(recommendations) > 3 {
+		recommendations = recommendations[:3]
 	}
 
-	return result
+	return recommendations
+}
+
+// calculate24GHzScore calculates interference score for 2.4GHz channels
+func calculate24GHzScore(channel, frequency int, analysis map[int]*NetworkAnalysis) float64 {
+	score := 0.0
+
+	// Base score: prefer non-overlapping channels (1, 6, 11)
+	nonOverlapping := []int{1, 6, 11}
+	isNonOverlapping := false
+	for _, noCh := range nonOverlapping {
+		if channel == noCh {
+			isNonOverlapping = true
+			break
+		}
+	}
+
+	if !isNonOverlapping {
+		score += 20.0 // Penalty for overlapping channels
+	}
+
+	// Calculate interference from all existing networks
+	for _, net := range analysis {
+		freqDiff := abs(frequency - net.Frequency)
+
+		// Strong penalty for same channel
+		if freqDiff == 0 {
+			score += float64(net.NetworkCount) * 50.0
+			// Additional penalty for strong signals
+			if net.StrongestRSSI > -60 {
+				score += 30.0
+			}
+			continue
+		}
+
+		// Adjacent channel interference (2.4GHz channels are 5MHz apart)
+		if freqDiff <= 15 { // Within 3 channels
+			interferenceWeight := 30.0 - (float64(freqDiff) * 2.0) // Decreases with distance
+			score += interferenceWeight * float64(net.NetworkCount)
+
+			// Signal strength impact
+			signalPenalty := calculateSignalPenalty(net.StrongestRSSI, freqDiff)
+			score += signalPenalty
+		}
+	}
+
+	return score
+}
+
+// getBest5GHzChannels finds optimal 5GHz channels
+func getBest5GHzChannels(analysis map[int]*NetworkAnalysis) []ChannelRecommendation {
+	// All available 5GHz channels
+	allChannels5G := getAllAvailable5GHzChannels()
+
+	var recommendations []ChannelRecommendation
+
+	for _, ch := range allChannels5G {
+		freq := channelToFrequency(ch)
+		score := calculate5GHzScore(ch, freq, analysis)
+
+		recommendation := ChannelRecommendation{
+			Channel:           ch,
+			Frequency:         freq,
+			Score:             score,
+			InterferenceLevel: getInterferenceLevel(score),
+			Reasoning:         getReasoning5GHz(ch, analysis),
+			SignalImpact:      calculateSignalImpact(ch, analysis),
+			FrequencyGap:      calculateFrequencyGap(freq, analysis),
+		}
+
+		recommendations = append(recommendations, recommendation)
+	}
+
+	// Sort by score (lower is better)
+	sort.Slice(recommendations, func(i, j int) bool {
+		return recommendations[i].Score < recommendations[j].Score
+	})
+
+	// Return top 3
+	if len(recommendations) > 3 {
+		recommendations = recommendations[:3]
+	}
+
+	return recommendations
+}
+
+// calculate5GHzScore calculates interference score for 5GHz channels
+func calculate5GHzScore(channel, frequency int, analysis map[int]*NetworkAnalysis) float64 {
+	score := 0.0
+
+	// Prefer non-DFS channels (UNII-1 and UNII-3)
+	isDFS := (channel >= 52 && channel <= 64) || (channel >= 100 && channel <= 144)
+	if isDFS {
+		score += 10.0 // Small penalty for DFS channels
+	}
+
+	// Calculate interference from existing networks
+	for _, net := range analysis {
+		freqDiff := abs(frequency - net.Frequency)
+
+		// Same channel penalty
+		if freqDiff == 0 {
+			score += float64(net.NetworkCount) * 40.0
+			if net.StrongestRSSI > -60 {
+				score += 25.0
+			}
+			continue
+		}
+
+		// 5GHz interference calculation (considering 80MHz channel widths)
+		interferenceRange := 80 // MHz, typical 5GHz channel width
+		if freqDiff <= interferenceRange {
+			interferenceWeight := float64(interferenceRange-freqDiff) / 10.0
+			score += interferenceWeight * float64(net.NetworkCount)
+
+			signalPenalty := calculateSignalPenalty(net.StrongestRSSI, freqDiff)
+			score += signalPenalty * 0.8 // 5GHz less prone to interference
+		}
+	}
+
+	return score
+}
+
+// calculateSignalPenalty calculates penalty based on signal strength and frequency distance
+func calculateSignalPenalty(signalStrength, freqDiff int) float64 {
+	// Convert dBm to penalty weight (stronger signals cause more interference)
+	signalWeight := 0.0
+	if signalStrength > -40 {
+		signalWeight = 20.0
+	} else if signalStrength > -60 {
+		signalWeight = 10.0
+	} else if signalStrength > -80 {
+		signalWeight = 5.0
+	}
+
+	// Apply distance factor
+	distanceFactor := 1.0 / (1.0 + float64(freqDiff)/10.0)
+	return signalWeight * distanceFactor
+}
+
+// calculateSignalImpact calculates the signal impact score for a channel
+func calculateSignalImpact(channel int, analysis map[int]*NetworkAnalysis) float64 {
+	impact := 0.0
+	freq := channelToFrequency(channel)
+
+	for _, net := range analysis {
+		freqDiff := abs(freq - net.Frequency)
+		if freqDiff <= 40 { // Within interference range
+			signalImpact := float64(-net.StrongestRSSI) / float64(freqDiff+1)
+			impact += signalImpact
+		}
+	}
+
+	return impact
+}
+
+// calculateFrequencyGap calculates the gap to the nearest network in MHz
+func calculateFrequencyGap(frequency int, analysis map[int]*NetworkAnalysis) int {
+	minGap := 1000 // Large initial value
+
+	for _, net := range analysis {
+		gap := abs(frequency - net.Frequency)
+		if gap > 0 && gap < minGap {
+			minGap = gap
+		}
+	}
+
+	if minGap == 1000 {
+		return 0 // No other networks
+	}
+	return minGap
+}
+
+// getReasoning24GHz provides reasoning for 2.4GHz channel recommendation
+func getReasoning24GHz(channel int, analysis map[int]*NetworkAnalysis) string {
+	nonOverlapping := []int{1, 6, 11}
+	isNonOverlapping := false
+	for _, noCh := range nonOverlapping {
+		if channel == noCh {
+			isNonOverlapping = true
+			break
+		}
+	}
+
+	if analysis[channel] == nil {
+		if isNonOverlapping {
+			return "Optimal: Non-overlapping channel with no detected networks"
+		}
+		return "Good: No networks detected, minimal interference expected"
+	}
+
+	net := analysis[channel]
+	if isNonOverlapping {
+		return fmt.Sprintf("Fair: Non-overlapping but has %d network(s), strongest at %d dBm",
+			net.NetworkCount, net.StrongestRSSI)
+	}
+
+	return fmt.Sprintf("Suboptimal: Overlapping channel with %d network(s)", net.NetworkCount)
+}
+
+// getReasoning5GHz provides reasoning for 5GHz channel recommendation
+func getReasoning5GHz(channel int, analysis map[int]*NetworkAnalysis) string {
+	isDFS := (channel >= 52 && channel <= 64) || (channel >= 100 && channel <= 144)
+
+	if analysis[channel] == nil {
+		if isDFS {
+			return "Good: DFS channel with no detected networks, radar detection required"
+		}
+		return "Excellent: Non-DFS channel with no detected networks"
+	}
+
+	net := analysis[channel]
+	status := "Fair"
+	if net.NetworkCount == 1 && net.StrongestRSSI < -70 {
+		status = "Good"
+	}
+
+	dfsNote := ""
+	if isDFS {
+		dfsNote = ", DFS required"
+	}
+
+	return fmt.Sprintf("%s: %d network(s), strongest at %d dBm%s",
+		status, net.NetworkCount, net.StrongestRSSI, dfsNote)
+}
+
+// getInterferenceLevel converts score to human-readable interference level
+func getInterferenceLevel(score float64) string {
+	switch {
+	case score <= 20:
+		return "Minimal"
+	case score <= 50:
+		return "Low"
+	case score <= 100:
+		return "Moderate"
+	case score <= 200:
+		return "High"
+	default:
+		return "Very High"
+	}
+}
+
+// Helper function for absolute value
+func abs(x int) int {
+	if x < 0 {
+		return -x
+	}
+	return x
+}
+
+// channelToFrequency converts channel to frequency - moved here for local access
+func channelToFrequency(channel int) int {
+	// 2.4GHz band (channels 1-14)
+	if channel >= 1 && channel <= 13 {
+		return 2412 + (channel-1)*5
+	}
+	if channel == 14 {
+		return 2484
+	}
+
+	// 5GHz bands
+	if channel >= 36 && channel <= 48 {
+		return 5180 + (channel-36)*5
+	}
+	if channel >= 52 && channel <= 64 {
+		return 5260 + (channel-52)*5
+	}
+	if channel >= 100 && channel <= 144 {
+		return 5500 + (channel-100)*5
+	}
+	if channel >= 149 && channel <= 165 {
+		return 5745 + (channel-149)*5
+	}
+	if channel >= 169 && channel <= 177 {
+		return 5845 + (channel-169)*5
+	}
+
+	return 2412 // Default fallback
 }
 
 // GetChannelInfo returns detailed information about channel allocations

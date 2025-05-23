@@ -127,26 +127,71 @@ func DisplayCompactResults(networks []WiFiNetwork) {
 func DisplayRecommendations(networks []analyzer.WiFiNetwork) {
 	recommendations := analyzer.GetChannelRecommendations(networks)
 
-	fmt.Println("\n=== Channel Recommendations ===")
-	fmt.Println("Recommended channels for optimal performance:")
+	fmt.Println("\n=== Channel Recommendations (Top 3 Optimal Choices) ===")
+	fmt.Println("Advanced analysis considering frequency separation, signal strength, and interference patterns")
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "Band\tBest Channels\t")
-	fmt.Fprintln(w, "----\t-------------\t")
+	for band, recs := range recommendations {
+		fmt.Printf("\n🔸 %s Band Recommendations:\n", band)
 
-	for band, channels := range recommendations {
-		channelStr := ""
-		for i, ch := range channels {
-			if i > 0 {
-				channelStr += ", "
-			}
-			channelStr += fmt.Sprintf("%d", ch)
+		if len(recs) == 0 {
+			fmt.Printf("  No recommendations available for %s band\n", band)
+			continue
 		}
-		fmt.Fprintf(w, "%s\t%s\t\n", band, channelStr)
+
+		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(w, "Rank\tChannel\tFreq(MHz)\tInterference\tGap(MHz)\tReasoning\t")
+		fmt.Fprintln(w, "----\t-------\t---------\t-----------\t--------\t---------\t")
+
+		for i, rec := range recs {
+			rank := fmt.Sprintf("#%d", i+1)
+			gap := "N/A"
+			if rec.FrequencyGap > 0 {
+				gap = fmt.Sprintf("%d", rec.FrequencyGap)
+			}
+
+			fmt.Fprintf(w, "%s\t%d\t%d\t%s\t%s\t%s\t\n",
+				rank,
+				rec.Channel,
+				rec.Frequency,
+				rec.InterferenceLevel,
+				gap,
+				rec.Reasoning,
+			)
+		}
+		w.Flush()
+
+		// Show frequency separation analysis
+		if len(recs) >= 2 {
+			fmt.Printf("\n  📊 Frequency Separation Analysis:\n")
+			for i := 0; i < len(recs)-1; i++ {
+				separation := abs(recs[i].Frequency - recs[i+1].Frequency)
+				fmt.Printf("     • Channel %d ↔ Channel %d: %d MHz separation\n",
+					recs[i].Channel, recs[i+1].Channel, separation)
+			}
+		}
+
+		// Show band-specific advice
+		if band == "2.4G" {
+			fmt.Printf("\n  💡 2.4GHz Advice: Prefer channels 1, 6, or 11 (non-overlapping). Avoid channels with strong nearby signals.\n")
+		} else {
+			fmt.Printf("\n  💡 5GHz Advice: More spectrum available. DFS channels may require radar detection but are often less congested.\n")
+		}
 	}
 
-	w.Flush()
+	fmt.Println("\n🎯 Configuration Tips:")
+	fmt.Println("   • Choose the #1 ranked channel for optimal performance")
+	fmt.Println("   • Monitor performance and try #2 or #3 if issues occur")
+	fmt.Println("   • Consider channel width: 80MHz for 5GHz, 20MHz for 2.4GHz in crowded areas")
+	fmt.Println("   • Update analysis periodically as WiFi landscape changes")
 	fmt.Println("\nPress Ctrl+C to exit...")
+}
+
+// abs helper function for frequency calculations
+func abs(x int) int {
+	if x < 0 {
+		return -x
+	}
+	return x
 }
 
 // GetCongestionLevel returns a human-readable congestion level
