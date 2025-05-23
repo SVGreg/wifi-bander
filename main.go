@@ -16,12 +16,27 @@ func main() {
 	fmt.Println("Initializing scanner...")
 
 	// Test the scanner once before starting the loop
-	_, err := scanner.ScanWiFiNetworks()
+	networks, err := scanner.ScanWiFiNetworks()
 	if err != nil {
 		log.Fatalf("Initial scan failed: %v\nPlease ensure you have the correct permissions to scan WiFi networks.", err)
 	}
 
-	fmt.Println("Scanner initialized successfully. Starting continuous scan...")
+	fmt.Println("Scanner initialized successfully.")
+
+	// Show detailed channel information on first run
+	if len(networks) > 0 {
+		// Convert to analyzer interface for channel analysis
+		analyzerNetworks := make([]analyzer.WiFiNetwork, len(networks))
+		for i, net := range networks {
+			analyzerNetworks[i] = net
+		}
+
+		display.DisplayChannelInfo(analyzerNetworks)
+		fmt.Println("\nStarting continuous scan...")
+		time.Sleep(3 * time.Second) // Give user time to read
+	} else {
+		fmt.Println("No networks detected in initial scan. Starting continuous scan...")
+	}
 
 	for {
 		networks, err := scanner.ScanWiFiNetworks()

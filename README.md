@@ -6,6 +6,8 @@ A cross-platform Go application that analyzes WiFi network congestion and helps 
 
 - **Cross-platform support** (Linux and macOS)
 - Scans both 2.4GHz and 5GHz WiFi bands
+- **Dynamic channel detection** - Automatically discovers available channels in your region
+- **Comprehensive channel support** - All WiFi standards (US/EU/Japan, UNII bands, DFS channels)
 - **Channel congestion analysis** instead of user counting (more reliable)
 - Displays signal strength and frequency information
 - **Smart channel recommendations** based on interference analysis
@@ -19,13 +21,42 @@ A cross-platform Go application that analyzes WiFi network congestion and helps 
 Instead of trying to count actual users (which requires specialized hardware), this application focuses on **channel congestion analysis**:
 
 1. **Scans available WiFi networks** using OS-specific system commands
-2. **Analyzes channel overlap** (especially important for 2.4GHz)
-3. **Calculates congestion scores** based on:
+2. **Dynamically detects channels** in use in your environment
+3. **Analyzes channel overlap** (especially important for 2.4GHz)
+4. **Calculates congestion scores** based on:
    - Number of networks on the same channel
    - Adjacent channel interference (2.4GHz)
    - Signal strength indicators
    - Estimated station counts
-4. **Provides channel recommendations** for optimal performance
+5. **Provides intelligent recommendations** prioritizing optimal channels for your region
+
+## Channel Detection & Analysis
+
+### **Dynamic Channel Discovery**
+- **Automatically detects** all channels in use in your environment
+- **Regional awareness** - Supports US (1-11), EU (1-13), Japan (1-14) standards
+- **Comprehensive 5GHz support** - All UNII bands including DFS channels
+- **No hardcoded limitations** - Adapts to your local WiFi regulations
+
+### **Supported Channel Ranges**
+#### **2.4GHz Band**
+- **Channels 1-11**: US standard
+- **Channels 1-13**: European standard  
+- **Channels 1-14**: Japanese standard (includes channel 14)
+- **Optimal channels**: 1, 6, 11 (non-overlapping)
+
+#### **5GHz Band**
+- **UNII-1 (36-48)**: 5.15-5.25 GHz, indoor use
+- **UNII-2A (52-64)**: 5.25-5.35 GHz, DFS required
+- **UNII-2C (100-144)**: 5.47-5.725 GHz, DFS required
+- **UNII-3 (149-165)**: 5.725-5.875 GHz, outdoor use
+- **UNII-4 (169-177)**: 5.85-5.925 GHz, newer allocation
+
+### **Smart Recommendations**
+1. **Prioritizes non-overlapping channels** (1, 6, 11) for 2.4GHz when available
+2. **Uses detected channels** as basis for recommendations
+3. **Falls back to comprehensive lists** if no channels detected
+4. **Considers regional regulations** automatically
 
 ## Architecture & Implementation
 
@@ -162,9 +193,47 @@ sudo ./wifi-bander
 ```
 WiFi Bander - Cross-Platform WiFi Network Analyzer
 Initializing scanner...
-Scanner initialized successfully. Starting continuous scan...
+Scanner initialized successfully.
 
-=== WiFi Network Analysis - 13:18:14 ===
+=== Channel Analysis ===
+
+2.4GHz Band Analysis:
+Detected channels:          [1 4 6 7 9 10]                   
+Non-overlapping (optimal):  [1 6 11]                         
+US standard (1-11):         [1 2 3 4 5 6 7 8 9 10 11]        
+EU standard (1-13):         [1 2 3 4 5 6 7 8 9 10 11 12 13]  
+
+5GHz Band Analysis:
+Detected channels:       [36 40 48 100]                                     
+UNII-1 (36-48):          [36 40 44 48]                                      
+UNII-2A (52-64, DFS):    [52 56 60 64]                                      
+UNII-2C (100-144, DFS):  [100 104 108 112 116 120 124 128 132 136 140 144]  
+UNII-3 (149-165):        [149 153 157 161 165]                              
+UNII-4 (169-177):        [169 173 177]                                      
+
+=== Channel Usage Statistics ===
+
+2.4GHz Channel Usage:
+Channel  Networks  Congestion  
+-------  --------  ----------  
+1        2         Medium      
+4        1         Low         
+6        1         Low         
+7        3         High        
+9        1         Low         
+10       1         Low         
+
+5GHz Channel Usage:
+Channel  Networks  Congestion  
+-------  --------  ----------  
+36       2         Medium      
+40       1         Low         
+48       2         Medium      
+100      2         Medium      
+
+Starting continuous scan...
+
+=== WiFi Network Analysis - 13:44:28 ===
 SSID             Band  Channel  Signal (dBm)  Stations  Congestion  Freq (MHz)  
 ----             ----  -------  -----------   --------  ----------  ---------   
 TP-Link_B618     5G    48       -81           1         High        5240        
@@ -182,13 +251,19 @@ TP-Link_B618     2.4G  10       -58           4         Very High   2457
 Recommended channels for optimal performance:
 Band  Best Channels  
 ----  -------------  
-2.4G  11, 6, 1       
-5G    44, 149, 153   
+2.4G  6, 4, 9       
+5G    40, 100, 36   
 
 Press Ctrl+C to exit...
 ```
 
 ## Understanding the Output
+
+### **Channel Analysis Section**
+- **Detected channels**: Actual channels found in your environment
+- **Standards comparison**: Shows what's available vs. what's optimal
+- **Band breakdown**: Technical details about 5GHz UNII bands
+- **DFS identification**: Channels requiring Dynamic Frequency Selection
 
 ### Signal Strength (dBm)
 - **-30 to -50**: Excellent signal
@@ -205,6 +280,7 @@ Press Ctrl+C to exit...
 ### Channel Information
 - **2.4GHz optimal channels**: 1, 6, 11 (non-overlapping)
 - **5GHz channels**: Much more available, less congested
+- **DFS channels**: May have restrictions but often less congested
 - **Frequency**: Shows exact MHz for technical analysis
 
 ## Why Channel Analysis Instead of User Counting?
@@ -312,7 +388,17 @@ MIT License
 
 ## Changelog
 
-### v2.0.0 (Current - Refactored)
+### v2.1.0 (Current - Dynamic Channel Detection)
+- ✅ **Dynamic channel detection** - No more hardcoded channel lists
+- ✅ **Comprehensive channel support** - All WiFi standards and regions
+- ✅ **DFS channel support** - Includes channels 52-64, 100-144
+- ✅ **Regional awareness** - US/EU/Japan standards
+- ✅ **Enhanced channel analysis** - Detailed breakdown of detected vs. available
+- ✅ **Smart recommendations** - Prioritizes optimal channels when available
+- ✅ **Extended frequency mapping** - Supports channels 1-177
+- ✅ **UNII band identification** - Complete 5GHz band breakdown
+
+### v2.0.0 (Previous - Refactored)
 - ✅ **Modular architecture** with `internal/` packages
 - ✅ **Interface-based design** for better extensibility
 - ✅ **Updated module name** to `github.com/svgreg/wifi-bander`
